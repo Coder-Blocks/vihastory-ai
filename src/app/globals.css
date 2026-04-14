@@ -1,0 +1,444 @@
+﻿html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: #000;
+  color: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+  overflow-x: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  text-decoration: none;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.page-shell {
+  min-height: 100vh;
+  position: relative;
+  background: #000;
+  color: #fff;
+  overflow: hidden;
+}
+
+.bg-glow-one,
+.bg-glow-two {
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+  filter: blur(120px);
+  opacity: 0.08;
+  z-index: 0;
+}
+
+.bg-glow-one {
+  width: 360px;
+  height: 360px;
+  background: #ffffff;
+  top: 12%;
+  left: 10%;
+}
+
+.bg-glow-two {
+  width: 420px;
+  height: 420px;
+  background: #ffffff;
+  bottom: 8%;
+  right: 6%;
+}
+
+.center-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  position: relative;
+  z-index: 3;
+}
+
+.comic-box {
+  width: 100%;
+  max-width: 620px;
+  background: linear-gradient(135deg, #ffffff, #e8e8e8);
+  color: #000;
+  border: 4px solid #000;
+  border-radius: 28px;
+  box-shadow: 14px 14px 0 #000;
+  padding: 52px 40px;
+  text-align: center;
+  position: relative;
+}
+
+.comic-badge {
+  display: inline-block;
+  margin-bottom: 18px;
+  padding: 8px 16px;
+  border: 3px solid #000;
+  border-radius: 999px;
+  background: #000;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.title-main {
+  margin: 0;
+  font-size: 56px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+.subtitle {
+  margin: 18px auto 0;
+  max-width: 480px;
+  font-size: 20px;
+  line-height: 1.6;
+  font-weight: 700;
+}
+
+.button-row {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 30px;
+}
+
+.comic-btn {
+  border: 3px solid #000;
+  background: #000;
+  color: #fff;
+  padding: 14px 24px;
+  border-radius: 18px;
+  font-weight: 800;
+  font-size: 18px;
+  cursor: pointer;
+  min-width: 150px;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.comic-btn:hover {
+  transform: translateY(-3px);
+  opacity: 0.95;
+}
+
+.comic-btn.secondary {
+  background: #fff;
+  color: #000;
+}
+
+.auth-box {
+  width: 100%;
+  max-width: 420px;
+  background: linear-gradient(135deg, #ffffff, #e8e8e8);
+  color: #000;
+  border: 4px solid #000;
+  border-radius: 28px;
+  box-shadow: 10px 10px 0 #000;
+  padding: 38px 30px;
+  text-align: center;
+  position: relative;
+  z-index: 3;
+}
+
+.auth-title {
+  margin: 0 0 10px;
+  font-size: 42px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.auth-subtitle {
+  margin: 0 0 26px;
+  font-size: 15px;
+  line-height: 1.6;
+  font-weight: 700;
+  color: #222;
+}
+
+.form-group {
+  margin-bottom: 14px;
+  text-align: left;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.form-input {
+  width: 100%;
+  padding: 14px 14px;
+  border: 3px solid #000;
+  border-radius: 16px;
+  background: #fff;
+  color: #000;
+  outline: none;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.form-input::placeholder {
+  color: #555;
+}
+
+.auth-footer {
+  margin-top: 18px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.auth-link {
+  color: #000;
+  text-decoration: underline;
+}
+
+.cursor-word {
+  position: fixed;
+  pointer-events: none;
+  font-size: 11px;
+  font-weight: 900;
+  background: #fff;
+  color: #000;
+  padding: 6px 10px;
+  border: 2px solid #000;
+  border-radius: 999px;
+  z-index: 9999;
+  animation: floatFade 0.85s ease forwards;
+  box-shadow: 4px 4px 0 #000;
+  white-space: nowrap;
+}
+
+@keyframes floatFade {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.85);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-24px) scale(1);
+  }
+}
+
+.top-back-link {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 13px;
+}
+
+.story-line {
+  margin-top: 18px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #1f1f1f;
+}
+
+.poster-background {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.story-poster {
+  position: absolute;
+  opacity: 0.2;
+  transform: rotate(var(--poster-angle));
+  animation: posterFloat 8s ease-in-out infinite;
+}
+
+.story-poster:nth-child(2) {
+  animation-duration: 9s;
+}
+
+.story-poster:nth-child(3) {
+  animation-duration: 10s;
+}
+
+.story-poster:nth-child(4) {
+  animation-duration: 11s;
+}
+
+.story-poster:nth-child(5) {
+  animation-duration: 8.5s;
+}
+
+.story-poster:nth-child(6) {
+  animation-duration: 9.5s;
+}
+
+.story-poster-inner {
+  width: 100%;
+  height: 100%;
+  border: 3px solid rgba(255, 255, 255, 0.6);
+  border-radius: 20px;
+  background: linear-gradient(180deg, #1b1b1b 0%, #050505 100%);
+  box-shadow: 0 0 30px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  position: relative;
+}
+
+.story-poster-genre {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  padding: 5px 10px;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.story-poster-art {
+  position: relative;
+  width: 100%;
+  height: 78%;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.22), transparent 30%),
+    linear-gradient(180deg, #2d2d2d 0%, #090909 100%);
+}
+
+.story-poster-moon {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: #fff;
+  opacity: 0.7;
+  filter: blur(1px);
+}
+
+.story-poster-character {
+  position: absolute;
+  bottom: 0;
+  border-radius: 999px 999px 12px 12px;
+  background: #fff;
+}
+
+.story-poster-character.hero {
+  left: 22%;
+  width: 42px;
+  height: 120px;
+  opacity: 0.95;
+}
+
+.story-poster-character.villain {
+  right: 18%;
+  width: 52px;
+  height: 140px;
+  opacity: 0.35;
+}
+
+.story-poster-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 14px;
+  padding: 0 14px;
+  text-align: center;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.2;
+}
+
+@keyframes posterFloat {
+  0% {
+    transform: translateY(0) rotate(var(--poster-angle));
+  }
+  50% {
+    transform: translateY(-10px) rotate(var(--poster-angle));
+  }
+  100% {
+    transform: translateY(0) rotate(var(--poster-angle));
+  }
+}
+
+@media (max-width: 1100px) {
+  .story-poster {
+    opacity: 0.12;
+  }
+}
+
+@media (max-width: 768px) {
+  .comic-box {
+    padding: 36px 22px;
+    border-radius: 22px;
+  }
+
+  .title-main {
+    font-size: 42px;
+  }
+
+  .subtitle {
+    font-size: 17px;
+  }
+
+  .comic-btn {
+    width: 100%;
+  }
+
+  .auth-box {
+    padding: 30px 20px;
+  }
+
+  .auth-title {
+    font-size: 34px;
+  }
+
+  .story-poster {
+    display: none;
+  }
+}
+@keyframes pulseWidth {
+  0% {
+    width: 25%;
+  }
+  50% {
+    width: 75%;
+  }
+  100% {
+    width: 35%;
+  }
+}

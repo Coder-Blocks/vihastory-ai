@@ -1,104 +1,118 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { useParams, useRouter } from "next/navigation";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db } from "../../../lib/firebase";
-import { useAuth } from "../../../context/AuthContext";
-import type { GeneratedStory } from "../../../types/story";
+
+type StoryCharacter = {
+  name: string;
+  role: string;
+  traits: string;
+  imageUrl?: string;
+};
+
+type StoryScene = {
+  title: string;
+  summary: string;
+  emotion: string;
+  dialogue: string;
+  imagePrompt: string;
+};
+
+type StoryDocument = {
+  userId?: string;
+  genre: string;
+  language: string;
+  prompt: string;
+  title: string;
+  subtitle?: string;
+  fullStory: string;
+  moral?: string;
+  scenes: StoryScene[];
+  characters?: StoryCharacter[];
+  hasReferenceImage?: boolean;
+  sceneImages?: Record<string, string>;
+};
+
+type SceneImageResponse = {
+  imageUrl?: string;
+  error?: string;
+};
 
 export default function StoryResultPage() {
   const params = useParams();
   const router = useRouter();
-  const { user, loading } = useAuth();
 
-  const [story, setStory] = useState<GeneratedStory | null>(null);
-  const [pageLoading, setPageLoading] = useState(true);
-  const [generatingIndex, setGeneratingIndex] = useState<number | null>(null);
-  const [imageError, setImageError] = useState("");
+  const storyId = Array.isArray(params?.id) ? params.id[0] : params?.id;
 
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push("/signin");
-    }
-  }, [loading, user, router]);
+  const [story, setStory] = useState<StoryDocument | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState("");
+
+  const [sceneImages, setSceneImages] = useState<Record<string, string>>({});
+  const [generatingSceneIndex, setGeneratingSceneIndex] = useState<number | null>(null);
+  const [sceneError, setSceneError] = useState("");
+  const [sceneSuccess, setSceneSuccess] = useState("");
 
   useEffect(() => {
     const loadStory = async () => {
-      const storyId = String(params?.id || "");
-
       if (!storyId) {
-        setPageLoading(false);
+        setPageError("Invalid story ID.");
+        setLoading(false);
         return;
       }
 
-      const cached = sessionStorage.getItem(`story_${storyId}`);
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached) as GeneratedStory;
-          setStory(parsed);
-        } catch {
-          // ignore
-        }
-      }
-
       try {
-        const refDoc = doc(db, "stories", storyId);
-        const snap = await getDoc(refDoc);
+        const sessionKey = story_${storyId};
+        const sessionStory = sessionStorage.getItem(sessionKey);
 
-        if (snap.exists()) {
-          const data = snap.data();
-
-          if (data?.generated) {
-            setStory(data.generated as GeneratedStory);
-            sessionStorage.setItem(
-              `story_${storyId}`,
-              JSON.stringify(data.generated)
-            );
-          }
-        } else {
-          sessionStorage.removeItem(`story_${storyId}`);
+        if (sessionStory) {
+          const parsed = JSON.parse(sessionStory) as StoryDocument;
+          setStory(parsed);
+          setSceneImages(parsed.sceneImages || {});
+          setLoading(false);
+          return;
         }
+
+        const storyRef = doc(db, "stories", storyId);
+        const snap = await getDoc(storyRef);
+
+        if (!snap.exists()) {
+          setPageError("Story not found.");
+          setLoading(false);
+          return;
+        }
+
+        const data = snap.data() as StoryDocument;
+        setStory(data);
+        setSceneImages(data.sceneImages || {});
       } catch (error) {
-        console.error("Story fetch failed:", error);
+        console.error("Failed to load story:", error);
+        setPageError("Failed to load story.");
       } finally {
-        setPageLoading(false);
+        setLoading(false);
       }
     };
 
     loadStory();
-  }, [params]);
+  }, [storyId]);
 
-  const mainReferenceCharacter = useMemo(() => {
-    if (!story?.characters?.length) return null;
-    return story.characters.find((char) => char.imageUrl) || null;
+  const referenceImages = useMemo(() => {
+    if (!story?.characters?.length) return [];
+    return story.characters
+      .map((char) => char.imageUrl?.trim())
+      .filter((url): url is string => !!url);
   }, [story]);
 
-  const handleGenerateSceneImage = async (sceneIndex: number) => {
-    if (!story) return;
+  const handleGenerateSceneImage = async (scene: StoryScene, index: number) => {
+    if (!storyId || !story) return;
 
-    const storyId = String(params?.id || "");
-    if (!storyId) return;
-
-    setImageError("");
-
-    const scene = story.scenes[sceneIndex];
-    const prompt = scene.imagePrompt?.trim();
-
-    if (!prompt) {
-      setImageError("This scene has no image prompt.");
-      return;
-    }
-
-    if (!mainReferenceCharacter?.imageUrl) {
-      setImageError(
-        "Please upload at least one character image first. Scene image generation needs a reference face."
-      );
-      return;
-    }
+    setSceneError("");
+    setSceneSuccess("");
 
     try {
-      setGeneratingIndex(sceneIndex);
+      setGeneratingSceneIndex(index);
 
       const response = await fetch("/api/generate-scene-image", {
         method: "POST",
@@ -106,78 +120,84 @@ export default function StoryResultPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          prompt,
-          faceImageUrl: mainReferenceCharacter.imageUrl,
-          characterName: mainReferenceCharacter.name || "main character",
+          prompt: scene.imagePrompt,
+          title: scene.title,
+          genre: story.genre,
+          language: story.language,
+          characters: story.characters || [],
+          referenceImages,
         }),
       });
 
-      const data = await response.json();
+      const data = (await response.json()) as SceneImageResponse;
 
-      if (!response.ok) {
-        throw new Error(
-          data?.error || "Failed to generate reference-based scene image."
-        );
+      if (!response.ok || data.error || !data.imageUrl) {
+        throw new Error(data.error || "Scene image generation failed.");
       }
 
-      const updatedScenes = story.scenes.map((item, index) =>
-        index === sceneIndex ? { ...item, imageUrl: data.imageUrl } : item
-      );
+      const updatedSceneImages = {
+        ...sceneImages,
+        [String(index)]: data.imageUrl,
+      };
 
-      const updatedStory: GeneratedStory = {
+      setSceneImages(updatedSceneImages);
+      setSceneSuccess(Scene ${index + 1} image generated successfully.);
+
+      const storyRef = doc(db, "stories", storyId);
+      await updateDoc(storyRef, {
+        sceneImages: updatedSceneImages,
+      });
+
+      const updatedStory: StoryDocument = {
         ...story,
-        scenes: updatedScenes,
+        sceneImages: updatedSceneImages,
       };
 
       setStory(updatedStory);
-      sessionStorage.setItem(`story_${storyId}`, JSON.stringify(updatedStory));
-
-      await updateDoc(doc(db, "stories", storyId), {
-        generated: updatedStory,
-      });
+      sessionStorage.setItem(story_${storyId}, JSON.stringify(updatedStory));
     } catch (error: any) {
-      console.error(error);
-      setImageError(
-        error?.message || "Failed to generate scene image. Please try again."
-      );
+      console.error("Scene image generation failed:", error);
+      setSceneError(error?.message || "Failed to generate scene image.");
     } finally {
-      setGeneratingIndex(null);
+      setGeneratingSceneIndex(null);
     }
   };
 
-  if (loading || pageLoading) {
+  if (loading) {
     return (
       <main className="page-shell">
         <div className="center-wrap">
-          <section className="auth-box">
-            <h1 className="auth-title">Loading...</h1>
+          <section className="comic-box" style={{ maxWidth: "980px" }}>
+            <div className="comic-badge">Loading</div>
+            <h1 className="title-main" style={{ fontSize: "52px" }}>
+              VihaStory AI
+            </h1>
+            <p className="subtitle">Loading your saved story...</p>
           </section>
         </div>
       </main>
     );
   }
 
-  if (!story) {
+  if (pageError || !story) {
     return (
       <main className="page-shell">
         <div className="center-wrap">
-          <section className="auth-box">
-            <h1 className="auth-title">Story Not Found</h1>
-            <div
-              style={{
-                marginTop: "18px",
-                display: "flex",
-                gap: "12px",
-                justifyContent: "center",
-                flexWrap: "wrap",
-              }}
-            >
+          <section className="comic-box" style={{ maxWidth: "760px" }}>
+            <div className="comic-badge">Error</div>
+            <h1 className="title-main" style={{ fontSize: "48px" }}>
+              Story Not Found
+            </h1>
+            <p className="subtitle">{pageError || "Unable to open this story."}</p>
+
+            <div style={{ marginTop: "22px", display: "grid", gap: "14px" }}>
               <button
                 className="comic-btn"
                 onClick={() => router.push("/create-story")}
               >
-                Create New Story
+                Create Another Story
               </button>
+
               <button
                 className="comic-btn secondary"
                 onClick={() => router.push("/dashboard")}
@@ -194,265 +214,402 @@ export default function StoryResultPage() {
   return (
     <main className="page-shell">
       <div className="center-wrap">
-        <section
-          className="comic-box"
-          style={{ maxWidth: "1040px", textAlign: "left" }}
-        >
+        <section className="comic-box" style={{ maxWidth: "1080px" }}>
           <div className="comic-badge">{story.genre}</div>
-          <h1 className="title-main" style={{ fontSize: "44px" }}>
+
+          <h1 className="title-main" style={{ fontSize: "56px", marginBottom: "8px" }}>
             {story.title}
           </h1>
 
-          <p className="subtitle" style={{ marginLeft: 0 }}>{story.hook}</p>
-
-          {imageError && (
-            <div
+          {story.subtitle && (
+            <p
               style={{
-                marginTop: "18px",
-                padding: "14px",
-                borderRadius: "14px",
-                border: "3px solid #000",
-                background: "#fff2f2",
-                color: "#8b0000",
-                fontWeight: 800,
+                fontSize: "24px",
+                fontWeight: 700,
+                lineHeight: 1.5,
+                marginBottom: "26px",
               }}
             >
-              {imageError}
+              {story.subtitle}
+            </p>
+          )}
+
+          {sceneError && (
+            <div
+              style={{
+                border: "3px solid #000",
+                borderRadius: "22px",
+                padding: "18px",
+                background: "#ffe8e8",
+                color: "#9f1111",
+                fontWeight: 800,
+                marginBottom: "22px",
+              }}
+            >
+              {sceneError}
             </div>
           )}
 
-          <div style={{ marginTop: "28px" }}>
-            <h3 style={{ marginBottom: "10px" }}>Full Story</h3>
-            <p style={{ lineHeight: 1.9, fontWeight: 700 }}>
+          {sceneSuccess && (
+            <div
+              style={{
+                border: "3px solid #000",
+                borderRadius: "22px",
+                padding: "18px",
+                background: "#eafaea",
+                color: "#086108",
+                fontWeight: 800,
+                marginBottom: "22px",
+              }}
+            >
+              {sceneSuccess}
+            </div>
+          )}
+
+          <div
+            style={{
+              marginBottom: "28px",
+              border: "4px solid #000",
+              borderRadius: "28px",
+              padding: "22px",
+              background: "#f8f8f8",
+            }}
+          >
+            <h2 style={{ fontSize: "28px", fontWeight: 900, marginBottom: "10px" }}>
+              Full Story
+            </h2>
+            <div
+              style={{
+                whiteSpace: "pre-wrap",
+                fontSize: "22px",
+                lineHeight: 1.9,
+                fontWeight: 700,
+              }}
+            >
               {story.fullStory}
-            </p>
+            </div>
           </div>
 
-          <div style={{ marginTop: "28px" }}>
-            <h3 style={{ marginBottom: "10px" }}>Characters</h3>
-            <div style={{ display: "grid", gap: "12px" }}>
-              {story.characters.length === 0 ? (
-                <p style={{ fontWeight: 700 }}>No custom characters added.</p>
-              ) : (
-                story.characters.map((char, index) => (
+          {!!story.characters?.length && (
+            <div
+              style={{
+                marginBottom: "30px",
+                border: "4px solid #000",
+                borderRadius: "28px",
+                padding: "22px",
+                background: "#f8f8f8",
+              }}
+            >
+              <h2 style={{ fontSize: "28px", fontWeight: 900, marginBottom: "18px" }}>
+                Characters
+              </h2>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                  gap: "18px",
+                }}
+              >
+                {story.characters.map((char, index) => (
                   <div
-                    key={index}
+                    key={${char.name}-${index}}
                     style={{
                       border: "3px solid #000",
-                      borderRadius: "16px",
-                      padding: "14px",
-                      background: "#f7f7f7",
-                      display: "flex",
-                      gap: "16px",
-                      alignItems: "center",
-                      flexWrap: "wrap",
+                      borderRadius: "24px",
+                      padding: "18px",
+                      background: "#fff",
                     }}
                   >
                     {char.imageUrl ? (
                       <img
                         src={char.imageUrl}
-                        alt={char.name || "Character"}
+                        alt={char.name || Character ${index + 1}}
                         style={{
-                          width: "110px",
-                          height: "110px",
+                          width: "100%",
+                          height: "240px",
                           objectFit: "cover",
-                          borderRadius: "16px",
+                          borderRadius: "18px",
                           border: "3px solid #000",
-                          background: "#fff",
+                          marginBottom: "14px",
                         }}
                       />
                     ) : (
                       <div
                         style={{
-                          width: "110px",
-                          height: "110px",
-                          borderRadius: "16px",
-                          border: "3px solid #000",
-                          background: "#fff",
+                          width: "100%",
+                          height: "240px",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
+                          borderRadius: "18px",
+                          border: "3px solid #000",
+                          marginBottom: "14px",
                           fontWeight: 900,
+                          fontSize: "24px",
+                          background: "#efefef",
                         }}
                       >
                         No Image
                       </div>
                     )}
 
-                    <div>
-                      <div style={{ fontWeight: 900 }}>
-                        {char.name || "Unnamed Character"}
-                      </div>
-                      <div style={{ marginTop: "6px", fontWeight: 700 }}>
-                        Role: {char.role || "Not specified"}
-                      </div>
-                      <div style={{ marginTop: "6px", fontWeight: 700 }}>
-                        Traits: {char.traits || "Not specified"}
-                      </div>
+                    <div style={{ fontSize: "24px", fontWeight: 900, marginBottom: "8px" }}>
+                      {char.name || Character ${index + 1}}
+                    </div>
+                    <div style={{ fontSize: "18px", fontWeight: 700, marginBottom: "4px" }}>
+                      Role: {char.role || "-"}
+                    </div>
+                    <div style={{ fontSize: "18px", fontWeight: 700 }}>
+                      Traits: {char.traits || "-"}
                     </div>
                   </div>
-                ))
-              )}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div style={{ marginTop: "28px" }}>
-            <h3 style={{ marginBottom: "10px" }}>Comic Scene Cards</h3>
+          {!!story.scenes?.length && (
+            <div style={{ marginBottom: "30px" }}>
+              <h2 style={{ fontSize: "34px", fontWeight: 900, marginBottom: "18px" }}>
+                Comic Scene Cards
+              </h2>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-                gap: "16px",
-              }}
-            >
-              {story.scenes.map((scene, index) => (
-                <div
-                  key={index}
-                  style={{
-                    border: "4px solid #000",
-                    borderRadius: "20px",
-                    padding: "16px",
-                    background: index % 2 === 0 ? "#fff" : "#f1f1f1",
-                    boxShadow: "8px 8px 0 #000",
-                  }}
-                >
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+                  gap: "22px",
+                }}
+              >
+                {story.scenes.map((scene, index) => (
                   <div
+                    key={${scene.title}-${index}}
                     style={{
-                      display: "inline-block",
-                      marginBottom: "10px",
-                      padding: "6px 12px",
-                      border: "2px solid #000",
-                      borderRadius: "999px",
-                      fontWeight: 900,
-                      background: "#000",
-                      color: "#fff",
-                    }}
-                  >
-                    Scene {index + 1}
-                  </div>
-
-                  <div style={{ fontWeight: 900, fontSize: "20px" }}>
-                    {scene.title}
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop: "10px",
-                      fontWeight: 700,
-                      lineHeight: 1.7,
-                    }}
-                  >
-                    {scene.summary}
-                  </div>
-
-                  <div style={{ marginTop: "12px", fontWeight: 800 }}>
-                    Emotion: {scene.emotion}
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop: "12px",
-                      padding: "12px",
-                      border: "2px dashed #000",
-                      borderRadius: "12px",
+                      border: "4px solid #000",
+                      borderRadius: "28px",
+                      padding: "20px",
                       background: "#fff",
-                      fontWeight: 700,
+                      boxShadow: "10px 10px 0 #000",
                     }}
                   >
-                    Dialogue: {scene.dialogue}
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop: "12px",
-                      padding: "12px",
-                      border: "2px solid #000",
-                      borderRadius: "12px",
-                      background: "#fff",
-                    }}
-                  >
-                    <div style={{ fontWeight: 900, marginBottom: "8px" }}>
-                      Scene Image Prompt
+                    <div className="comic-badge" style={{ marginBottom: "14px" }}>
+                      Scene {index + 1}
                     </div>
-                    <div style={{ fontWeight: 700 }}>{scene.imagePrompt}</div>
-                  </div>
 
-                  <div style={{ marginTop: "14px" }}>
-                    <button
-                      className="comic-btn"
-                      onClick={() => handleGenerateSceneImage(index)}
-                      disabled={generatingIndex === index}
-                    >
-                      {generatingIndex === index
-                        ? "Generating Image..."
-                        : "Generate Image"}
-                    </button>
-                  </div>
-
-                  {scene.imageUrl && (
-                    <div
+                    <h3
                       style={{
-                        marginTop: "16px",
-                        position: "relative",
-                        borderRadius: "16px",
-                        overflow: "hidden",
-                        border: "3px solid #000",
-                        background: "#fff",
+                        fontSize: "24px",
+                        fontWeight: 900,
+                        marginBottom: "12px",
+                        lineHeight: 1.3,
                       }}
                     >
-                      <img
-                        src={scene.imageUrl}
-                        alt={scene.title}
-                        style={{
-                          width: "100%",
-                          display: "block",
-                        }}
-                      />
+                      {scene.title}
+                    </h3>
 
+                    <p
+                      style={{
+                        fontSize: "18px",
+                        fontWeight: 700,
+                        lineHeight: 1.7,
+                        marginBottom: "14px",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {scene.summary}
+                    </p>
+
+                    <div
+                      style={{
+                        fontSize: "18px",
+                        fontWeight: 900,
+                        marginBottom: "14px",
+                      }}
+                    >
+                      Emotion: {scene.emotion}
+                    </div>
+
+                    <div
+                      style={{
+                        border: "3px dashed #000",
+                        borderRadius: "20px",
+                        padding: "16px",
+                        marginBottom: "16px",
+                        background: "#fafafa",
+                      }}
+                    >
                       <div
                         style={{
-                          position: "absolute",
-                          top: "14px",
-                          left: "14px",
-                          maxWidth: "78%",
-                          background: "#fff",
-                          border: "3px solid #000",
-                          borderRadius: "22px",
-                          padding: "12px 14px",
-                          fontWeight: 800,
-                          lineHeight: 1.35,
-                          boxShadow: "4px 4px 0 #000",
+                          fontSize: "18px",
+                          fontWeight: 900,
+                          marginBottom: "8px",
+                        }}
+                      >
+                        Dialogue
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "18px",
+                          fontWeight: 700,
+                          lineHeight: 1.7,
+                          whiteSpace: "pre-wrap",
                         }}
                       >
                         {scene.dialogue}
                       </div>
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    <div
+                      style={{
+                        border: "3px solid #000",
+                        borderRadius: "20px",
+                        padding: "16px",
+                        marginBottom: "16px",
+                        background: "#f8f8f8",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: "18px",
+                          fontWeight: 900,
+                          marginBottom: "8px",
+                        }}
+                      >
+                        Scene Image Prompt
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "18px",
+                          fontWeight: 700,
+                          lineHeight: 1.7,
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {scene.imagePrompt}
+                      </div>
+                    </div>
+
+                    {sceneImages[String(index)] && (
+                      <div
+                        style={{
+                          marginBottom: "16px",
+                          position: "relative",
+                          borderRadius: "22px",
+                          overflow: "hidden",
+                          border: "4px solid #000",
+                          background: "#fff",
+                        }}
+                      >
+                        <img
+                          src={sceneImages[String(index)]}
+                          alt={Scene ${index + 1}}
+                          style={{
+                            width: "100%",
+                            display: "block",
+                          }}
+                        />
+
+                        {/* Cartoon speech bubble overlay */}
+                        {scene.dialogue && (
+                          <>
+                            <div
+                              style={{
+                                position: "absolute",
+                                top: "16px",
+                                left: "16px",
+                                maxWidth: "78%",
+                                background: "#fff",
+                                border: "4px solid #000",
+                                borderRadius: "28px",
+                                padding: "14px 16px",
+                                boxShadow: "6px 6px 0 #000",
+                                zIndex: 2,
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: "16px",
+                                  fontWeight: 900,
+                                  lineHeight: 1.5,
+                                  color: "#000",
+                                  whiteSpace: "pre-wrap",
+                                }}
+                              >
+                                {scene.dialogue}
+                              </div>
+                            </div>
+
+                            {/* Bubble tail */}
+                            <div
+                              style={{
+                                position: "absolute",
+                                top: "96px",
+                                left: "52px",
+                                width: "26px",
+                                height: "26px",
+                                background: "#fff",
+                                borderLeft: "4px solid #000",
+                                borderBottom: "4px solid #000",
+                                transform: "rotate(-35deg)",
+                                zIndex: 1,
+                              }}
+                            />
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    <button
+                      className="comic-btn"
+                      style={{ width: "100%" }}
+                      onClick={() => handleGenerateSceneImage(scene, index)}
+                      disabled={generatingSceneIndex === index}
+                    >
+                      {generatingSceneIndex === index
+                        ? "Generating Image..."
+                        : "Generate Image"}
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div style={{ marginTop: "28px" }}>
-            <h3 style={{ marginBottom: "10px" }}>Moral</h3>
-            <p style={{ fontWeight: 800 }}>{story.moral}</p>
-          </div>
+          {!!story.moral && (
+            <div
+              style={{
+                marginBottom: "28px",
+                border: "4px solid #000",
+                borderRadius: "28px",
+                padding: "22px",
+                background: "#f8f8f8",
+              }}
+            >
+              <h2 style={{ fontSize: "28px", fontWeight: 900, marginBottom: "12px" }}>
+                Moral
+              </h2>
+              <div
+                style={{
+                  fontSize: "22px",
+                  fontWeight: 700,
+                  lineHeight: 1.8,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {story.moral}
+              </div>
+            </div>
+          )}
 
-          <div
-            style={{
-              marginTop: "28px",
-              display: "flex",
-              gap: "14px",
-              flexWrap: "wrap",
-            }}
-          >
+          <div style={{ display: "grid", gap: "14px", marginTop: "14px" }}>
             <button
               className="comic-btn"
               onClick={() => router.push("/create-story")}
             >
               Create Another Story
             </button>
+
             <button
               className="comic-btn secondary"
               onClick={() => router.push("/dashboard")}

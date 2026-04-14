@@ -1,97 +1,144 @@
 import { NextRequest, NextResponse } from "next/server";
-import Replicate from "replicate";
 
-const token = process.env.REPLICATE_API_TOKEN;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-if (!token) {
-  throw new Error("REPLICATE_API_TOKEN is missing in .env.local");
-}
+type StoryCharacter = {
+  name?: string;
+  role?: string;
+  traits?: string;
+  imageUrl?: string;
+};
 
-const replicate = new Replicate({
-  auth: token,
-});
+type GenerateSceneImageBody = {
+  prompt?: string;
+  title?: string;
+  genre?: string;
+  language?: string;
+  characters?: StoryCharacter[];
+  referenceImages?: string[];
+};
 
-function buildStyledPrompt(scenePrompt: string, characterName?: string) {
+function buildStyledPrompt(params: {
+  prompt: string;
+  title: string;
+  genre: string;
+  language: string;
+  characters: StoryCharacter[];
+}) {
+  const { prompt, title, genre, language, characters } = params;
+
+  const characterLine = characters.length
+    ? characters
+        .map((char) => {
+          const parts = [
+            char.name?.trim(),
+            char.role?.trim(),
+            char.traits?.trim(),
+          ].filter(Boolean);
+
+          return parts.join(", ");
+        })
+        .filter(Boolean)
+        .join(" | ")
+    : "No named characters";
+
   return [
-    "warm emotional vertical comic-book illustration",
-    "viral instagram pocket-stories style",
-    "clean cartoon rendering",
-    "soft cinematic lighting",
-    "cute expressive character design",
-    "storybook panel composition",
-    "high detail",
-    "family safe",
-    "no watermark",
-    "no extra limbs",
-    characterName ? `main character resembles ${characterName}` : "",
-    scenePrompt,
-  ]
-    .filter(Boolean)
-    .join(", ");
+    "Create a polished vertical comic-book illustration.",
+    "Warm cinematic lighting, cute expressive characters, emotional storytelling frame.",
+    "Clean cartoon style, storybook finish, mobile-friendly composition.",
+    "High quality, family safe, no watermark, no text artifacts, no blurry faces.",
+    "If dialogue is implied, leave visual space for a speech bubble.",
+    Scene title: ${title}.,
+    Genre: ${genre}.,
+    Language context: ${language}.,
+    Characters: ${characterLine}.,
+    Scene description: ${prompt}.,
+  ].join(" ");
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = (await request.json()) as GenerateSceneImageBody;
 
-    const prompt = String(body.prompt || "").trim();
-    const faceImageUrl = String(body.faceImageUrl || "").trim();
-    const characterName = String(body.characterName || "").trim();
+    const prompt = body.prompt?.trim() || "";
+    const title = body.title?.trim() || "Scene";
+    const genre = body.genre?.trim() || "Comic";
+    const language = body.language?.trim() || "English";
+    const characters = Array.isArray(body.characters) ? body.characters : [];
 
     if (!prompt) {
       return NextResponse.json(
-        { error: "Image prompt is required." },
+        { error: "Scene prompt is required." },
         { status: 400 }
       );
     }
 
-    if (!faceImageUrl) {
+    const hfApiKey = process.env.HF_API_KEY;
+    if (!hfApiKey) {
       return NextResponse.json(
-        { error: "Reference face image is required." },
-        { status: 400 }
-      );
-    }
-
-    const finalPrompt = buildStyledPrompt(prompt, characterName);
-
-    const output = await replicate.run(
-      "bytedance/flux-pulid:8baa7ef2255075b46f4d91cd238c21d31181b3e6a864463f967960bb0112525b",
-      {
-        input: {
-          main_face_image: faceImageUrl,
-          prompt: finalPrompt,
-          negative_prompt:
-            "bad quality, worst quality, text, signature, watermark, extra limbs, blurry, distorted face, duplicate person, cropped face",
-          width: 768,
-          height: 1024,
-          num_steps: 18,
-          guidance_scale: 4,
-          id_weight: 1.2,
-          start_step: 0,
-          output_format: "jpg",
-          output_quality: 90,
-          num_outputs: 1,
+        {
+          error:
+            "Missing HF_API_KEY. Add it in .env.local and Firebase App Hosting environment variables.",
         },
-      }
-    );
-
-    const imageUrl = Array.isArray(output) ? String(output[0] || "") : "";
-
-    if (!imageUrl) {
-      return NextResponse.json(
-        { error: "No image URL returned from model." },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ imageUrl });
+    const finalPrompt = buildStyledPrompt({
+      prompt,
+      title,
+      genre,
+      language,
+      characters,
+    });
+
+    const response = await fetch(
+      "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell",
+      {
+        method: "POST",
+        headers: {
+          Authorization: Bearer ${hfApiKey},
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          inputs: finalPrompt,
+          parameters: {
+            width: 768,
+            height: 1024,
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      let errorMessage = "Image generation failed.";
+      try {
+        const errorData = await response.json();
+        errorMessage =
+          errorData?.error ||
+          errorData?.message ||
+          Image generation failed with status ${response.status};
+      } catch {
+        errorMessage = Image generation failed with status ${response.status};
+      }
+
+      return NextResponse.json({ error: errorMessage }, { status: 500 });
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const contentType = response.headers.get("content-type") || "image/png";
+    const base64 = Buffer.from(arrayBuffer).toString("base64");
+    const dataUrl = data:${contentType};base64,${base64};
+
+    return NextResponse.json({ imageUrl: dataUrl });
   } catch (error: any) {
-    console.error("Replicate scene image generation error:", error);
+    console.error("Hugging Face scene image generation error:", error);
 
     return NextResponse.json(
       {
         error:
-          error?.message || "Failed to generate reference-based scene image.",
+          error?.message || "Failed to generate scene image.",
       },
       { status: 500 }
     );

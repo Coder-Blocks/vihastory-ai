@@ -10,57 +10,110 @@ import {
   runTransaction,
   serverTimestamp,
 } from "firebase/firestore";
-import { db } from "../../lib/firebase";
+import {
+  getDownloadURL,
+  ref,
+  uploadBytes,
+} from "firebase/storage";
+import { db, storage } from "../../lib/firebase";
 import { useAuth } from "../../context/AuthContext";
-import type { StoryCharacter, GeneratedStory } from "../../types/story";
-import { getMonthKey, normalizeUsageData } from "../../lib/usage";
 
-const genres = [
-  "Thriller",
-  "Horror",
-  "Comedy",
-  "Romance",
-  "Motivation",
-  "Devotional",
-  "Kids Story",
-];
+type StoryCharacter = {
+  name: string;
+  role: string;
+  traits: string;
+  file: File | null;
+  previewUrl: string;
+  imageUrl?: string;
+};
 
-const languages = ["English", "Telugu", "Hindi", "Tamil", "Kannada"];
+type GeneratedScene = {
+  title: string;
+  summary: string;
+  emotion: string;
+  dialogue: string;
+  imagePrompt: string;
+};
 
-type UserProfile = {
+type GeneratedStory = {
+  title: string;
+  subtitle?: string;
+  fullStory: string;
+  moral?: string;
+  scenes: GeneratedScene[];
+  genre: string;
+  language: string;
+  characters?: Array<{
+    name: string;
+    role: string;
+    traits: string;
+    imageUrl?: string;
+  }>;
+};
+
+type UsageData = {
   plan?: string;
   storiesUsedThisMonth?: number;
   storyLimitPerMonth?: number;
   usageMonthKey?: string;
 };
 
-type CharacterForm = StoryCharacter & {
-  file?: File | null;
-  previewUrl?: string;
+const GENRES = [
+  "Romance",
+  "Comedy",
+  "Thriller",
+  "Horror",
+  "Fantasy",
+  "Kids Story",
+  "Adventure",
+  "Devotional",
+  "Drama",
+  "Sci-Fi",
+];
+
+const languages = ["English", "Telugu", "Hindi", "Tamil", "Kannada"];
+
+const getMonthKey = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = ${now.getMonth() + 1}.padStart(2, "0");
+  return ${year}-${month};
 };
 
-const loadingStages = [
-  "Crafting your story...",
-  "Building characters...",
-  "Creating emotional scenes...",
-  "Almost ready...",
-];
+const createEmptyCharacter = (): StoryCharacter => ({
+  name: "",
+  role: "",
+  traits: "",
+  file: null,
+  previewUrl: "",
+  imageUrl: "",
+});
 
 export default function CreateStoryPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
-  const [genre, setGenre] = useState("Thriller");
-  const [language, setLanguage] = useState("English");
+  const [genre, setGenre] = useState("Romance");
+  const [language, setLanguage] = useState("Telugu");
   const [prompt, setPrompt] = useState("");
-  const [characters, setCharacters] = useState<CharacterForm[]>([
-    { name: "", role: "", traits: "", imageUrl: "", file: null, previewUrl: "" },
+  const [characters, setCharacters] = useState<StoryCharacter[]>([
+    createEmptyCharacter(),
   ]);
-  const [submitting, setSubmitting] = useState(false);
-  const [loadingText, setLoadingText] = useState(loadingStages[0]);
-  const [error, setError] = useState("");
-  const [userData, setUserData] = useState<UserProfile | null>(null);
+
   const [checkingPlan, setCheckingPlan] = useState(true);
+  const [canGenerate, setCanGenerate] = useState(true);
+  const [planName, setPlanName] = useState("Free");
+  const [usageText, setUsageText] = useState("");
+
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [loadingText, setLoadingText] = useState("Crafting your story...");
+  const [progress, setProgress] = useState(10);
+
+  const hasAnyCharacterImage = useMemo(
+    () => characters.some((c) => !!c.file),
+    [characters]
+  );
 
   useEffect(() => {
     if (!loading && !user) {
@@ -69,104 +122,210 @@ export default function CreateStoryPage() {
   }, [loading, user, router]);
 
   useEffect(() => {
-    const loadUserData = async () => {
+    const checkPlan = async () => {
       if (!user) return;
 
       try {
         const userRef = doc(db, "users", user.uid);
-        const userSnap = await getDoc(userRef);
+        const snap = await getDoc(userRef);
 
-        if (userSnap.exists()) {
-          const normalized = normalizeUsageData(userSnap.data() as UserProfile);
-          setUserData(normalized);
+        const monthKey = getMonthKey();
 
-          const currentMonthKey = getMonthKey();
-          if (
-            normalized?.usageMonthKey !==
-            (userSnap.data() as UserProfile).usageMonthKey
-          ) {
-            await runTransaction(db, async (transaction) => {
-              transaction.update(userRef, {
-                usageMonthKey: currentMonthKey,
-                storiesUsedThisMonth: 0,
-              });
-            });
-          }
+        if (!snap.exists()) {
+          setPlanName("Free");
+          setUsageText("0 / 1");
+          setCanGenerate(true);
+          setCheckingPlan(false);
+          return;
         }
+
+        const data = snap.data() as UsageData;
+        let storiesUsedThisMonth = data.storiesUsedThisMonth ?? 0;
+        let storyLimitPerMonth = data.storyLimitPerMonth ?? 1;
+        const usageMonthKey = data.usageMonthKey ?? monthKey;
+        const plan = data.plan ?? "Free";
+
+        if (usageMonthKey !== monthKey) {
+          storiesUsedThisMonth = 0;
+        }
+
+        const unlimited = storyLimitPerMonth >= 999999;
+        const allowed = unlimited || storiesUsedThisMonth < storyLimitPerMonth;
+
+        setPlanName(plan);
+        setUsageText(
+          unlimited
+            ? ${storiesUsedThisMonth} / Unlimited
+            : ${storiesUsedThisMonth} / ${storyLimitPerMonth}
+        );
+        setCanGenerate(allowed);
       } catch (err) {
-        console.error(err);
+        console.error("Plan check failed:", err);
+        setCanGenerate(true);
       } finally {
         setCheckingPlan(false);
       }
     };
 
-    loadUserData();
+    checkPlan();
   }, [user]);
 
   useEffect(() => {
     if (!submitting) return;
 
+    const steps = [
+      { text: "Crafting your story...", value: 20 },
+      { text: "Building scenes and dialogue...", value: 45 },
+      { text: "Preparing character references...", value: 65 },
+      { text: "Saving your story...", value: 85 },
+      { text: "Finalizing output...", value: 95 },
+    ];
+
     let index = 0;
-    const interval = setInterval(() => {
-      index = (index + 1) % loadingStages.length;
-      setLoadingText(loadingStages[index]);
+    const interval = window.setInterval(() => {
+      if (index < steps.length) {
+        setLoadingText(steps[index].text);
+        setProgress(steps[index].value);
+        index += 1;
+      }
     }, 1200);
 
-    return () => clearInterval(interval);
+    return () => window.clearInterval(interval);
   }, [submitting]);
+
+  useEffect(() => {
+    return () => {
+      characters.forEach((char) => {
+        if (char.previewUrl) {
+          URL.revokeObjectURL(char.previewUrl);
+        }
+      });
+    };
+  }, [characters]);
 
   const updateCharacter = (
     index: number,
-    field: keyof CharacterForm,
-    value: string
+    field: keyof StoryCharacter,
+    value: string | File | null
   ) => {
     setCharacters((prev) =>
-      prev.map((char, i) =>
-        i === index ? { ...char, [field]: value } : char
-      )
-    );
-  };
+      prev.map((char, i) => {
+        if (i !== index) return char;
 
-  const handleFileChange = (index: number, file: File | null) => {
-    if (!file) return;
+        if (field === "file") {
+          if (char.previewUrl) {
+            URL.revokeObjectURL(char.previewUrl);
+          }
 
-    const previewUrl = URL.createObjectURL(file);
+          const file = value as File | null;
 
-    setCharacters((prev) =>
-      prev.map((char, i) =>
-        i === index ? { ...char, file, previewUrl } : char
-      )
+          return {
+            ...char,
+            file,
+            previewUrl: file ? URL.createObjectURL(file) : "",
+          };
+        }
+
+        return {
+          ...char,
+          [field]: value,
+        };
+      })
     );
   };
 
   const addCharacter = () => {
-    setCharacters((prev) => [
-      ...prev,
-      { name: "", role: "", traits: "", imageUrl: "", file: null, previewUrl: "" },
-    ]);
+    setCharacters((prev) => [...prev, createEmptyCharacter()]);
   };
 
   const removeCharacter = (index: number) => {
-    setCharacters((prev) => prev.filter((_, i) => i !== index));
+    setCharacters((prev) => {
+      const target = prev[index];
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+
+      const updated = prev.filter((_, i) => i !== index);
+      return updated.length ? updated : [createEmptyCharacter()];
+    });
   };
 
-  const canGenerate =
-    (userData?.storiesUsedThisMonth ?? 0) < (userData?.storyLimitPerMonth ?? 0);
+  const uploadCharacterImages = async (): Promise<StoryCharacter[]> => {
+    if (!user) throw new Error("Please sign in again.");
 
-  const cleanedCharacters = useMemo(
-    () =>
-      characters
-        .map((char) => ({
-          name: char.name,
-          role: char.role,
-          traits: char.traits,
-          imageUrl: "",
-        }))
-        .filter(
-          (char) => char.name.trim() || char.role.trim() || char.traits.trim()
-        ),
-    [characters]
-  );
+    const uploaded = await Promise.all(
+      characters.map(async (char, index) => {
+        const baseCharacter: StoryCharacter = {
+          name: char.name.trim(),
+          role: char.role.trim(),
+          traits: char.traits.trim(),
+          file: null,
+          previewUrl: char.previewUrl,
+          imageUrl: char.imageUrl || "",
+        };
+
+        if (!char.file) {
+          return baseCharacter;
+        }
+
+        const safeName = (char.name || character-${index + 1})
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/gi, "-");
+
+        const fileExt = char.file.name.split(".").pop()?.toLowerCase() || "jpg";
+
+        const storageRef = ref(
+          storage,
+          users/${user.uid}/characters/${Date.now()}-${safeName}.${fileExt}
+        );
+
+        await uploadBytes(storageRef, char.file);
+        const imageUrl = await getDownloadURL(storageRef);
+
+        return {
+          ...baseCharacter,
+          imageUrl,
+        };
+      })
+    );
+
+    return uploaded;
+  };
+
+  const increaseUsage = async () => {
+    if (!user) return;
+
+    const userRef = doc(db, "users", user.uid);
+    const monthKey = getMonthKey();
+
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(userRef);
+
+      if (!snap.exists()) {
+        transaction.set(userRef, {
+          uid: user.uid,
+          email: user.email || "",
+          fullName: user.displayName || "",
+          plan: "Free",
+          storiesUsedThisMonth: 1,
+          storyLimitPerMonth: 1,
+          usageMonthKey: monthKey,
+          createdAt: serverTimestamp(),
+        });
+        return;
+      }
+
+      const data = snap.data() as UsageData;
+      const currentMonthKey = data.usageMonthKey ?? monthKey;
+      const currentUsed =
+        currentMonthKey === monthKey ? data.storiesUsedThisMonth ?? 0 : 0;
+
+      transaction.update(userRef, {
+        storiesUsedThisMonth: currentUsed + 1,
+        usageMonthKey: monthKey,
+      });
+    });
+  };
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -189,7 +348,21 @@ export default function CreateStoryPage() {
 
     try {
       setSubmitting(true);
-      setLoadingText(loadingStages[0]);
+      setProgress(15);
+      setLoadingText("Preparing your characters...");
+
+      const uploadedCharacters = await uploadCharacterImages();
+
+      const cleanedCharacters = uploadedCharacters.filter(
+        (char) =>
+          char.name.trim() ||
+          char.role.trim() ||
+          char.traits.trim() ||
+          char.imageUrl
+      );
+
+      setProgress(35);
+      setLoadingText("Generating full story...");
 
       const response = await fetch("/api/generate-story", {
         method: "POST",
@@ -200,33 +373,43 @@ export default function CreateStoryPage() {
           genre,
           language,
           prompt,
-          characters: cleanedCharacters,
+          characters: cleanedCharacters.map((char) => ({
+            name: char.name,
+            role: char.role,
+            traits: char.traits,
+            imageUrl: char.imageUrl || "",
+          })),
         }),
       });
 
       const data = (await response.json()) as GeneratedStory | { error: string };
 
       if (!response.ok || "error" in data) {
-        throw new Error("error" in data ? data.error : "Story generation failed");
+        throw new Error(
+          "error" in data ? data.error : "Story generation failed."
+        );
       }
 
-      const mergedGenerated: GeneratedStory = {
-        ...data,
-        characters: cleanedCharacters,
-      };
+      setProgress(80);
+      setLoadingText("Saving your story...");
 
       const payload = {
         userId: user.uid,
         genre,
         language,
         prompt,
-        characters: characters.map((char) => ({
+        title: data.title,
+        subtitle: data.subtitle || "",
+        fullStory: data.fullStory,
+        moral: data.moral || "",
+        scenes: data.scenes || [],
+        characters: cleanedCharacters.map((char) => ({
           name: char.name,
           role: char.role,
           traits: char.traits,
-          imageUrl: "",
+          imageUrl: char.imageUrl || "",
         })),
-        generated: mergedGenerated,
+        hasReferenceImage: cleanedCharacters.some((char) => !!char.imageUrl),
         createdAt: Date.now(),
       };
 
@@ -235,129 +418,82 @@ export default function CreateStoryPage() {
         createdAtServer: serverTimestamp(),
       });
 
-      const pendingUploads = characters
-        .map((char) => ({
-          name: char.name,
-          role: char.role,
-          traits: char.traits,
-          previewUrl: char.previewUrl || "",
-        }))
-        .filter((char) => char.name || char.role || char.traits || char.previewUrl);
+      await increaseUsage();
 
-      sessionStorage.setItem(`story_${docRef.id}`, JSON.stringify(payload.generated));
-      sessionStorage.setItem(
-        `story_uploads_${docRef.id}`,
-        JSON.stringify(pendingUploads)
-      );
+      sessionStorage.setItem(story_${docRef.id}, JSON.stringify(payload));
 
-      const userRef = doc(db, "users", user.uid);
-      const currentMonthKey = getMonthKey();
+      setProgress(100);
+      setLoadingText("Opening your story...");
 
-      await runTransaction(db, async (transaction) => {
-        const snap = await transaction.get(userRef);
-        if (!snap.exists()) throw new Error("User profile not found.");
-
-        const raw = snap.data() as UserProfile;
-        const savedMonthKey = raw.usageMonthKey || currentMonthKey;
-        const used = savedMonthKey === currentMonthKey ? raw.storiesUsedThisMonth || 0 : 0;
-        const limit = raw.storyLimitPerMonth || 1;
-
-        if (used >= limit) {
-          throw new Error("Monthly story limit reached.");
-        }
-
-        transaction.update(userRef, {
-          usageMonthKey: currentMonthKey,
-          storiesUsedThisMonth: used + 1,
-        });
-      });
-
-      router.push(`/story/${docRef.id}`);
+      router.push(/story/${docRef.id});
     } catch (err: any) {
-      setError(err.message || "Something went wrong.");
+      console.error("Story generation failed:", err);
+      setError(err?.message || "Something went wrong.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (loading || !user || checkingPlan) return null;
+  if (loading || !user || checkingPlan) {
+    return null;
+  }
 
   return (
     <main className="page-shell">
       <div className="center-wrap">
-        <section className="comic-box" style={{ maxWidth: "900px", textAlign: "left", position: "relative" }}>
+        <section className="comic-box" style={{ maxWidth: "900px" }}>
+          <div className="comic-badge">Create Story</div>
+
+          <h1 className="title-main" style={{ fontSize: "52px" }}>
+            VihaStory AI
+          </h1>
+
+          <p className="subtitle">
+            Create a comic-style story with scenes, dialogue, and character-driven moments.
+          </p>
+
           <div
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: "16px",
-              flexWrap: "wrap",
-              alignItems: "start",
+              marginTop: "18px",
+              marginBottom: "24px",
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: "14px",
             }}
           >
-            <div>
-              <div className="comic-badge">Create Story</div>
-              <h1 className="title-main" style={{ fontSize: "44px" }}>
-                VihaStory AI
-              </h1>
-              <p className="subtitle" style={{ marginLeft: 0 }}>
-                Generate story first. Character image enhancement comes next.
-              </p>
+            <div className="mini-stat-box">
+              <div className="mini-stat-title">Current Plan</div>
+              <div className="mini-stat-value">{planName}</div>
             </div>
-
-            <div
-              style={{
-                border: "3px solid #000",
-                borderRadius: "16px",
-                padding: "14px",
-                background: "#f7f7f7",
-                minWidth: "220px",
-              }}
-            >
-              <div style={{ fontWeight: 900 }}>Plan</div>
-              <div style={{ marginTop: "8px", fontWeight: 700 }}>
-                {userData?.plan || "Free"}
-              </div>
-              <div style={{ marginTop: "8px", fontWeight: 700 }}>
-                Usage: {userData?.storiesUsedThisMonth ?? 0} /{" "}
-                {userData?.storyLimitPerMonth ?? 0}
+            <div className="mini-stat-box">
+              <div className="mini-stat-title">Monthly Usage</div>
+              <div className="mini-stat-value">{usageText}</div>
+            </div>
+            <div className="mini-stat-box">
+              <div className="mini-stat-title">Reference Images</div>
+              <div className="mini-stat-value">
+                {hasAnyCharacterImage ? "Added" : "Optional"}
               </div>
             </div>
           </div>
 
-          {!canGenerate && (
-            <div
-              style={{
-                marginTop: "18px",
-                padding: "14px",
-                borderRadius: "14px",
-                border: "3px solid #000",
-                background: "#fff2f2",
-                color: "#8b0000",
-                fontWeight: 800,
-              }}
-            >
-              Your monthly story limit is reached. Upgrade your plan before generating another story.
-            </div>
-          )}
-
-          <form onSubmit={handleGenerate} style={{ marginTop: "28px" }}>
+          <form onSubmit={handleGenerate}>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "16px",
-                marginBottom: "18px",
+                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                gap: "18px",
+                marginBottom: "20px",
               }}
             >
-              <div className="form-group">
+              <div>
                 <label className="form-label">Genre</label>
                 <select
                   className="form-input"
                   value={genre}
                   onChange={(e) => setGenre(e.target.value)}
                 >
-                  {genres.map((item) => (
+                  {GENRES.map((item) => (
                     <option key={item} value={item}>
                       {item}
                     </option>
@@ -365,14 +501,14 @@ export default function CreateStoryPage() {
                 </select>
               </div>
 
-              <div className="form-group">
+              <div>
                 <label className="form-label">Language</label>
                 <select
                   className="form-input"
                   value={language}
                   onChange={(e) => setLanguage(e.target.value)}
                 >
-                  {languages.map((item) => (
+                  {LANGUAGES.map((item) => (
                     <option key={item} value={item}>
                       {item}
                     </option>
@@ -381,154 +517,193 @@ export default function CreateStoryPage() {
               </div>
             </div>
 
-            <div className="form-group">
+            <div style={{ marginBottom: "28px" }}>
               <label className="form-label">Story Idea</label>
               <textarea
                 className="form-input"
-                placeholder="Example: I want a Telugu kids story where a brave child and a talking rabbit save their village."
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                style={{ minHeight: "130px", resize: "vertical" }}
+                placeholder="Example: Ravi loves Vinita. Murthy is a motivation speaker. Harish is Vinita's brother and starts as a villain. I want a romantic, comedy, drama story with a happy ending."
+                rows={6}
+                style={{ resize: "vertical", minHeight: "180px" }}
               />
             </div>
 
-            <div style={{ marginTop: "28px", marginBottom: "12px", fontWeight: 800 }}>
-              Characters
+            <div style={{ marginBottom: "22px" }}>
+              <h2 style={{ fontSize: "34px", fontWeight: 900, marginBottom: "16px" }}>
+                Characters
+              </h2>
+
+              {characters.map((char, index) => (
+                <div
+                  key={index}
+                  style={{
+                    border: "4px solid #000",
+                    borderRadius: "30px",
+                    padding: "22px",
+                    marginBottom: "22px",
+                    background: "#efefef",
+                    boxShadow: "10px 10px 0 #000",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                      gap: "14px",
+                    }}
+                  >
+                    <input
+                      className="form-input"
+                      type="text"
+                      placeholder="Character Name"
+                      value={char.name}
+                      onChange={(e) =>
+                        updateCharacter(index, "name", e.target.value)
+                      }
+                    />
+
+                    <input
+                      className="form-input"
+                      type="text"
+                      placeholder="Role"
+                      value={char.role}
+                      onChange={(e) =>
+                        updateCharacter(index, "role", e.target.value)
+                      }
+                    />
+
+                    <input
+                      className="form-input"
+                      type="text"
+                      placeholder="Traits"
+                      value={char.traits}
+                      onChange={(e) =>
+                        updateCharacter(index, "traits", e.target.value)
+                      }
+                    />
+                  </div>
+
+                  <div style={{ marginTop: "18px" }}>
+                    <label className="form-label">
+                      Character Image (Optional for later enhancement)
+                    </label>
+
+                    <input
+                      className="form-input"
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        updateCharacter(index, "file", file);
+                      }}
+                    />
+                  </div>
+
+                  {char.previewUrl && (
+                    <div style={{ marginTop: "16px" }}>
+                      <img
+                        src={char.previewUrl}
+                        alt={char.name || Character ${index + 1}}
+                        style={{
+                          width: "160px",
+                          height: "160px",
+                          objectFit: "cover",
+                          borderRadius: "24px",
+                          border: "4px solid #000",
+                          display: "block",
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    className="comic-btn secondary"
+                    style={{ marginTop: "18px", width: "100%" }}
+                    onClick={() => removeCharacter(index)}
+                  >
+                    Remove Character
+                  </button>
+                </div>
+              ))}
+
+              <button
+                type="button"
+                className="comic-btn secondary"
+                style={{ width: "100%", marginBottom: "18px" }}
+                onClick={addCharacter}
+              >
+                Add Character
+              </button>
             </div>
 
-            {characters.map((char, index) => (
+            {error && (
               <div
-                key={index}
                 style={{
                   border: "3px solid #000",
-                  borderRadius: "18px",
+                  borderRadius: "22px",
                   padding: "16px",
-                  marginBottom: "16px",
+                  background: "#ffe8e8",
+                  color: "#9f1111",
+                  fontWeight: 800,
+                  marginBottom: "20px",
+                }}
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="comic-btn"
+              style={{ width: "100%", marginBottom: "18px" }}
+              disabled={submitting || !canGenerate}
+            >
+              {submitting ? "Generating..." : "Generate Story"}
+            </button>
+
+            {submitting && (
+              <div
+                style={{
+                  marginTop: "10px",
+                  border: "4px solid #000",
+                  borderRadius: "28px",
+                  padding: "18px",
                   background: "#f5f5f5",
                 }}
               >
                 <div
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr 1fr",
-                    gap: "12px",
+                    fontWeight: 900,
+                    fontSize: "18px",
+                    marginBottom: "14px",
                   }}
                 >
-                  <input
-                    className="form-input"
-                    placeholder="Character Name"
-                    value={char.name}
-                    onChange={(e) => updateCharacter(index, "name", e.target.value)}
-                  />
-                  <input
-                    className="form-input"
-                    placeholder="Role"
-                    value={char.role}
-                    onChange={(e) => updateCharacter(index, "role", e.target.value)}
-                  />
-                  <input
-                    className="form-input"
-                    placeholder="Traits"
-                    value={char.traits}
-                    onChange={(e) => updateCharacter(index, "traits", e.target.value)}
-                  />
+                  {loadingText}
                 </div>
 
-                <div style={{ marginTop: "12px" }}>
-                  <label className="form-label">Character Image (Optional for later enhancement)</label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="form-input"
-                    onChange={(e) =>
-                      handleFileChange(index, e.target.files?.[0] || null)
-                    }
-                  />
-                </div>
-
-                {char.previewUrl && (
-                  <div style={{ marginTop: "14px" }}>
-                    <img
-                      src={char.previewUrl}
-                      alt={char.name || `Character ${index + 1}`}
-                      style={{
-                        width: "120px",
-                        height: "120px",
-                        objectFit: "cover",
-                        borderRadius: "16px",
-                        border: "3px solid #000",
-                      }}
-                    />
-                  </div>
-                )}
-
-                {characters.length > 1 && (
-                  <button
-                    type="button"
-                    className="comic-btn secondary"
-                    onClick={() => removeCharacter(index)}
-                    style={{ marginTop: "12px" }}
-                  >
-                    Remove Character
-                  </button>
-                )}
-              </div>
-            ))}
-
-            <div style={{ display: "flex", gap: "14px", flexWrap: "wrap" }}>
-              <button type="button" className="comic-btn secondary" onClick={addCharacter}>
-                Add Character
-              </button>
-
-              <button
-                type="submit"
-                className="comic-btn"
-                disabled={submitting || !canGenerate}
-                style={{ opacity: submitting || !canGenerate ? 0.7 : 1 }}
-              >
-                {submitting ? "Generating..." : "Generate Story"}
-              </button>
-            </div>
-
-            {error && (
-              <p style={{ color: "red", marginTop: "16px", fontWeight: 700 }}>
-                {error}
-              </p>
-            )}
-          </form>
-
-          {submitting && (
-            <div
-              style={{
-                marginTop: "20px",
-                border: "3px solid #000",
-                borderRadius: "18px",
-                padding: "16px",
-                background: "#fff",
-              }}
-            >
-              <div style={{ fontWeight: 900, fontSize: "18px" }}>{loadingText}</div>
-              <div
-                style={{
-                  marginTop: "12px",
-                  height: "12px",
-                  background: "#ddd",
-                  borderRadius: "999px",
-                  overflow: "hidden",
-                }}
-              >
                 <div
                   style={{
-                    width: "70%",
-                    height: "100%",
-                    background: "#000",
+                    height: "16px",
+                    background: "#d8d8d8",
                     borderRadius: "999px",
-                    animation: "pulseWidth 1.4s ease-in-out infinite",
+                    overflow: "hidden",
                   }}
-                />
+                >
+                  <div
+                    style={{
+                      width: ${progress}%,
+                      height: "100%",
+                      background: "#000",
+                      borderRadius: "999px",
+                      transition: "width 0.4s ease",
+                    }}
+                  />
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </form>
         </section>
       </div>
     </main>

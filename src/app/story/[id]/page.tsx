@@ -64,7 +64,7 @@ export default function StoryResultPage() {
       }
 
       try {
-        const sessionKey = story_${storyId};
+        const sessionKey = `story_${storyId}`;
         const sessionStory = sessionStorage.getItem(sessionKey);
 
         if (sessionStory) {
@@ -141,7 +141,7 @@ export default function StoryResultPage() {
       };
 
       setSceneImages(updatedSceneImages);
-      setSceneSuccess(Scene ${index + 1} image generated successfully.);
+      setSceneSuccess(`Scene ${index + 1} image generated successfully.`);
 
       const storyRef = doc(db, "stories", storyId);
       await updateDoc(storyRef, {
@@ -154,7 +154,7 @@ export default function StoryResultPage() {
       };
 
       setStory(updatedStory);
-      sessionStorage.setItem(story_${storyId}, JSON.stringify(updatedStory));
+      sessionStorage.setItem(`story_${storyId}`, JSON.stringify(updatedStory));
     } catch (error: any) {
       console.error("Scene image generation failed:", error);
       setSceneError(error?.message || "Failed to generate scene image.");
@@ -313,7 +313,7 @@ export default function StoryResultPage() {
               >
                 {story.characters.map((char, index) => (
                   <div
-                    key={${char.name}-${index}}
+                    key={`${char.name}-${index}`}
                     style={{
                       border: "3px solid #000",
                       borderRadius: "24px",
@@ -324,7 +324,7 @@ export default function StoryResultPage() {
                     {char.imageUrl ? (
                       <img
                         src={char.imageUrl}
-                        alt={char.name || Character ${index + 1}}
+                        alt={char.name || `Character ${index + 1}`}
                         style={{
                           width: "100%",
                           height: "240px",
@@ -355,7 +355,7 @@ export default function StoryResultPage() {
                     )}
 
                     <div style={{ fontSize: "24px", fontWeight: 900, marginBottom: "8px" }}>
-                      {char.name || Character ${index + 1}}
+                      {char.name || `Character ${index + 1}`}
                     </div>
                     <div style={{ fontSize: "18px", fontWeight: 700, marginBottom: "4px" }}>
                       Role: {char.role || "-"}
@@ -384,7 +384,7 @@ export default function StoryResultPage() {
               >
                 {story.scenes.map((scene, index) => (
                   <div
-                    key={${scene.title}-${index}}
+                    key={`${scene.title}-${index}`}
                     style={{
                       border: "4px solid #000",
                       borderRadius: "28px",
@@ -503,7 +503,7 @@ export default function StoryResultPage() {
                       >
                         <img
                           src={sceneImages[String(index)]}
-                          alt={Scene ${index + 1}}
+                          alt={`Scene ${index + 1}`}
                           style={{
                             width: "100%",
                             display: "block",

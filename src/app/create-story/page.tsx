@@ -75,9 +75,9 @@ const languages = ["English", "Telugu", "Hindi", "Tamil", "Kannada"];
 
 const getMonthKey = () => {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = ${now.getMonth() + 1}.padStart(2, "0");
-  return ${year}-${month};
+  const year = now.getFullYear()
+  const month = `${now.getMonth() + 1}`.padStart(2, "0");
+  return `${year}-${month}`;
 };
 
 const createEmptyCharacter = (): StoryCharacter => ({
@@ -155,8 +155,8 @@ export default function CreateStoryPage() {
         setPlanName(plan);
         setUsageText(
           unlimited
-            ? ${storiesUsedThisMonth} / Unlimited
-            : ${storiesUsedThisMonth} / ${storyLimitPerMonth}
+            ? `${storiesUsedThisMonth} / Unlimited`
+            : `${storiesUsedThisMonth} / ${storyLimitPerMonth}`
         );
         setCanGenerate(allowed);
       } catch (err) {
@@ -268,7 +268,7 @@ export default function CreateStoryPage() {
           return baseCharacter;
         }
 
-        const safeName = (char.name || character-${index + 1})
+        const safeName = (char.name || `character-${index + 1}`)
           .toLowerCase()
           .replace(/[^a-z0-9]+/gi, "-");
 
@@ -276,7 +276,7 @@ export default function CreateStoryPage() {
 
         const storageRef = ref(
           storage,
-          users/${user.uid}/characters/${Date.now()}-${safeName}.${fileExt}
+          `users/${user.uid}/characters/${Date.now()}-${safeName}.${fileExt}`
         );
 
         await uploadBytes(storageRef, char.file);
@@ -420,12 +420,12 @@ export default function CreateStoryPage() {
 
       await increaseUsage();
 
-      sessionStorage.setItem(story_${docRef.id}, JSON.stringify(payload));
+      sessionStorage.setItem(`story_${docRef.id}`, JSON.stringify(payload));
 
       setProgress(100);
       setLoadingText("Opening your story...");
 
-      router.push(/story/${docRef.id});
+      router.push(`/story/${docRef.id}`);
     } catch (err: any) {
       console.error("Story generation failed:", err);
       setError(err?.message || "Something went wrong.");
@@ -508,7 +508,7 @@ export default function CreateStoryPage() {
                   value={language}
                   onChange={(e) => setLanguage(e.target.value)}
                 >
-                  {LANGUAGES.map((item) => (
+                  {languages.map((item) => (
                     <option key={item} value={item}>
                       {item}
                     </option>
@@ -604,7 +604,7 @@ export default function CreateStoryPage() {
                     <div style={{ marginTop: "16px" }}>
                       <img
                         src={char.previewUrl}
-                        alt={char.name || Character ${index + 1}}
+                        alt={char.name || `Character ${index + 1}`}
                         style={{
                           width: "160px",
                           height: "160px",
@@ -693,7 +693,7 @@ export default function CreateStoryPage() {
                 >
                   <div
                     style={{
-                      width: ${progress}%,
+                      width: `${progress}%`,
                       height: "100%",
                       background: "#000",
                       borderRadius: "999px",

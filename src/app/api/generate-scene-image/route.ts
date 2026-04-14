@@ -44,17 +44,17 @@ function buildStyledPrompt(params: {
     : "No named characters";
 
   return [
-    "Create a polished vertical comic-book illustration.",
-    "Warm cinematic lighting, cute expressive characters, emotional storytelling frame.",
-    "Clean cartoon style, storybook finish, mobile-friendly composition.",
-    "High quality, family safe, no watermark, no text artifacts, no blurry faces.",
-    "If dialogue is implied, leave visual space for a speech bubble.",
-    Scene title: ${title}.,
-    Genre: ${genre}.,
-    Language context: ${language}.,
-    Characters: ${characterLine}.,
-    Scene description: ${prompt}.,
-  ].join(" ");
+  "Create a polished vertical comic-book illustration.",
+  "Warm cinematic lighting, cute expressive characters, emotional storytelling frame.",
+  "Clean cartoon style, storybook finish, mobile-friendly composition.",
+  "High quality, family safe, no watermark, no text artifacts, no blurry faces.",
+  "If dialogue is implied, leave visual space for a speech bubble.",
+  `Scene title: ${title}.`,
+  `Genre: ${genre}.`,
+  `Language context: ${language}.`,
+  `Characters: ${characterLine}.`,
+  `Scene description: ${prompt}.`,
+].join(" ");
 }
 
 export async function POST(request: NextRequest) {
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
       {
         method: "POST",
         headers: {
-          Authorization: Bearer ${hfApiKey},
+          Authorization: `Bearer ${hfApiKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -118,9 +118,9 @@ export async function POST(request: NextRequest) {
         errorMessage =
           errorData?.error ||
           errorData?.message ||
-          Image generation failed with status ${response.status};
+          `Image generation failed with status ${response.status}`;
       } catch {
-        errorMessage = Image generation failed with status ${response.status};
+        errorMessage = `Image generation failed with status ${response.status}`;
       }
 
       return NextResponse.json({ error: errorMessage }, { status: 500 });
@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await response.arrayBuffer();
     const contentType = response.headers.get("content-type") || "image/png";
     const base64 = Buffer.from(arrayBuffer).toString("base64");
-    const dataUrl = data:${contentType};base64,${base64};
+    const dataUrl = `data:${contentType};base64,${base64}`;
 
     return NextResponse.json({ imageUrl: dataUrl });
   } catch (error: any) {
